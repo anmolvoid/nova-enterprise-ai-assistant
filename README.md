@@ -324,7 +324,8 @@ mvn spring-boot:run
     account.
 -   Never share API keys in logs, screenshots, or source code.
 
-### ChromaDB is unavailable
+### ChromaDB is unavailable   
+
 
 ``` cmd
 docker ps
