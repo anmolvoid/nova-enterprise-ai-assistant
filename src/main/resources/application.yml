@@ -1,0 +1,35 @@
+
+spring:
+  ai:
+    openai:
+      api-key: "${api_key}"
+      base-url: https://api.groq.com/openai
+      chat:
+        options:
+          model: openai/gpt-oss-120b
+
+    vectorstore:
+      chroma:
+        client:
+          host: http://localhost
+          port: 8000
+        tenant-name: default_tenant
+        database-name: default_database
+        initialize-schema: true
+        collection-name: nova-documents-cosine
+
+  datasource:
+    url: jdbc:h2:file:./data/chatdb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  h2:
+    console:
+      enabled: true
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    open-in-view: false

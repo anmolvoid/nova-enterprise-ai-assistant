@@ -1,0 +1,30 @@
+# Maven
+target/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+application-local.yml
+
+# Local databases
+data/
+*.mv.db
+*.trace.db
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+.venv/
+venv/
+
+# Local vector database
+chroma-data/
