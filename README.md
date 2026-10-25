@@ -1,142 +1,86 @@
-# NOVA --- Enterprise AI Knowledge Assistant
+# NOVA — Enterprise AI Knowledge Assistant
 
-NOVA is a Spring Boot application that demonstrates Retrieval-Augmented
-Generation (RAG): users upload PDF documents, the application extracts
-and chunks their text, stores the chunks in ChromaDB, retrieves relevant
-context for questions, and sends that context to a chat model through
-Groq's OpenAI-compatible API. Chat history is stored using Spring Data
-JPA and H2.
-
-> This README reflects the configuration and versions confirmed during
-> development. Verify the actual repository and environment before
-> publishing.
+NOVA is a Spring Boot application that demonstrates Retrieval-Augmented Generation (RAG). Users upload PDF documents, the application extracts and chunks their text, stores the chunks in ChromaDB, retrieves relevant context for questions, and sends that context to a chat model through Groq's OpenAI-compatible API. Chat history is stored using Spring Data JPA and H2.
 
 ## Contents
 
--   [Features](#features)
--   [Technology stack](#technology-stack)
--   [Architecture](#architecture)
--   [Prerequisites](#prerequisites)
--   [Configuration](#configuration)
--   [Run ChromaDB](#run-chromadb)
--   [Build and run](#build-and-run)
--   [API endpoints](#api-endpoints)
--   [Swagger / OpenAPI](#swagger--openapi)
--   [Persistence and limitations](#persistence-and-limitations)
--   [Troubleshooting](#troubleshooting)
--   [GitHub security checklist](#github-security-checklist)
+- [Features](#features)
+- [Technology Stack](#technology-stack)
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Configuration](#configuration)
+- [Run ChromaDB](#run-chromadb)
+- [Build and Run](#build-and-run)
+- [API Endpoints](#api-endpoints)
+- [Swagger / OpenAPI](#swagger--openapi)
+- [Persistence and Limitations](#persistence-and-limitations)
+- [Troubleshooting](#troubleshooting)
+- [Security Checklist](#security-checklist)
 
 ## Features
 
--   PDF upload and text extraction.
--   Text chunking with overlap.
--   Vector indexing and similarity search with ChromaDB.
--   RAG-based chat using Spring AI and Groq.
--   Chat history persistence with Spring Data JPA and H2.
--   Regular and streaming chat flows in the application.
--   REST API built with Spring MVC.
--   Interactive API documentation with Swagger UI / OpenAPI when
-    Springdoc is installed.
+- Upload PDF documents and extract their text.
+- Split extracted text into overlapping chunks.
+- Store and retrieve document chunks using ChromaDB similarity search.
+- Answer questions using a RAG workflow with Spring AI and Groq.
+- Persist chat history using Spring Data JPA and H2.
+- Support regular and streaming chat flows where implemented.
+- Expose REST endpoints through Spring MVC.
+- Provide interactive API documentation through Swagger UI / OpenAPI when Springdoc is configured.
 
-## Technology stack
+## Technology Stack
 
-  -------------------------------------------------------------------------------
-  Technology              Version / setting               Role
-  ----------------------- ------------------------------- -----------------------
-  Java                    17; development machine         Runtime
-                          reported 17.0.12                
+| Technology | Purpose |
+|---|---|
+| Java 17 | Application runtime |
+| Spring Boot 3.5.x | Application framework |
+| Spring AI 1.1.x | Chat model and vector-store integrations |
+| Maven | Build and dependency management |
+| Groq API | Hosted language-model inference |
+| ChromaDB | Vector storage and similarity search |
+| Docker | Run ChromaDB as a separate service |
+| Spring Data JPA / Hibernate | Relational persistence |
+| H2 | Local relational database for chat history |
+| Apache PDFBox | PDF text extraction |
+| Spring Web MVC | REST API |
+| Spring WebFlux | Reactive/streaming support where used |
+| Springdoc OpenAPI UI | Swagger UI and OpenAPI documentation, if configured |
 
-  Spring Boot             3.5.6                           Application framework
-
-  Spring AI               1.1.0 BOM                       Chat model and
-                                                          vector-store
-                                                          integrations
-
-  Maven                   3.9.16 on development machine   Build
-
-  Groq API                OpenAI-compatible base URL      Hosted LLM inference
-                          `https://api.groq.com/openai`   
-
-  Chat model              `openai/gpt-oss-120b`           Configured model
-
-  ChromaDB                Python package 1.5.9 confirmed; Vector database
-                          Docker image version must be    
-                          checked separately              
-
-  Spring AI Chroma vector 1.1.0                           Vector storage and
-  store                                                   retrieval
-
-  Spring AI Transformers  1.1.0 starter                   Local text embeddings;
-                                                          exact model ID should
-                                                          be confirmed
-
-  H2                      Version managed by Spring Boot  Local relational
-                          dependency management           database
-
-  Spring Data JPA /       Versions managed by Spring Boot ORM and persistence
-  Hibernate                                               
-
-  Spring Web MVC          Version managed by Spring Boot  REST endpoints
-
-  Spring WebFlux          Dependency included for         Streaming support
-                          reactive/streaming              
-                          functionality where used        
-
-  Apache PDFBox           3.0.5                           PDF text extraction
-
-  Springdoc OpenAPI UI    2.8.13 if added to `pom.xml`    Swagger UI and OpenAPI
-
-  Docker Desktop          Installed on development        Runs ChromaDB
-                          machine                         
-
-  Python                  3.12.10 in the development      Diagnostics/scripts
-                          Chroma diagnostic environment   
-  -------------------------------------------------------------------------------
-
-**Version accuracy:** Java/Maven versions describe the development
-machine. Spring Boot manages versions of several transitive
-dependencies. The Python ChromaDB package version does not establish the
-Docker image version. A 384-dimensional vector does not identify the
-embedding model; confirm the configured model ID before naming it in
-documentation.
+Check the project's `pom.xml` and configuration files for the exact dependency and image versions used by your checkout. The ChromaDB Python package version does not necessarily match the Docker image version. Vector dimensions alone do not identify an embedding model; confirm the configured model before documenting its name.
 
 ## Architecture
 
 ### PDF ingestion
 
-1.  Client sends a PDF to `POST /api/v1/documents/upload`.
-2.  `DocumentIngestionService` validates the file.
-3.  `PdfService` extracts text.
-4.  `ChunkingService` splits text into chunks (currently size 1,000,
-    overlap 150).
-5.  Each Spring AI `Document` stores text and metadata such as `source`
-    and `chunk_index`.
-6.  `VectorStore` adds the documents to ChromaDB.
+1. A client uploads a PDF to `POST /api/v1/documents/upload`.
+2. `DocumentIngestionService` validates the uploaded file.
+3. `PdfService` extracts text from the PDF.
+4. `ChunkingService` splits the text into chunks (currently 1,000 characters with 150 characters of overlap).
+5. Each Spring AI `Document` stores the chunk text and metadata such as `source` and `chunk_index`.
+6. The vector store adds the documents to ChromaDB.
 
 ### Chat / RAG
 
-1.  Client submits a question to `POST /api/v1/chat`.
-2.  `ChatService` loads session history.
-3.  ChromaDB similarity search requests up to four relevant chunks.
-4.  Retrieved text and source metadata are assembled into context.
-5.  Spring AI sends the context and question to the configured Groq
-    model.
-6.  User and assistant messages are saved in chat history.
+1. A client submits a question to `POST /api/v1/chat`.
+2. `ChatService` loads the session history.
+3. ChromaDB similarity search requests up to four relevant chunks.
+4. Retrieved text and source metadata are assembled into context.
+5. Spring AI sends the context and question to the configured Groq model.
+6. User and assistant messages are saved in chat history.
 
-Source labels in the generated answer are prompt-driven unless the
-application validates citations programmatically.
+Source labels in generated answers are prompt-driven unless the application validates citations programmatically.
 
 ## Prerequisites
 
--   JDK 17
--   Apache Maven 3.9.x (or a compatible Maven version)
--   Docker Desktop running
--   A valid Groq API key
--   Git
+- JDK 17
+- Apache Maven 3.9.x or a compatible version
+- Docker Desktop or another Docker-compatible runtime
+- A valid Groq API key
+- Git
 
-Verify in Windows CMD:
+Verify the tools in Windows Command Prompt:
 
-``` cmd
+```cmd
 java -version
 javac -version
 mvn -version
@@ -150,20 +94,25 @@ Ensure `JAVA_HOME` points to a JDK 17 installation.
 
 ### Groq API key
 
-In Windows CMD, set the key for the current terminal session:
+Set the key in the same terminal session used to start the application.
 
-``` cmd
-set GROQ_API_KEY=replace_with_your_new_groq_api_key
+**Windows Command Prompt:**
+
+```cmd
+set GROQ_API_KEY=replace_with_your_groq_api_key
 ```
 
-The variable applies only to that CMD session. Do not commit the key.
-Revoke any key that was previously exposed and generate a new one.
+**PowerShell:**
 
-The relevant `application.yml` configuration should look like this;
-merge it with the existing file rather than replacing unrelated
-settings:
+```powershell
+$env:GROQ_API_KEY = "replace_with_your_groq_api_key"
+```
 
-``` yaml
+Do not commit the real key. If a key was previously exposed or committed, revoke it and create a replacement.
+
+The relevant `application.yml` settings should use an environment variable, merged with your existing configuration rather than replacing unrelated settings:
+
+```yaml
 spring:
   ai:
     openai:
@@ -186,106 +135,82 @@ spring:
 
 The configured H2 JDBC URL is:
 
-``` text
+```text
 jdbc:h2:file:./data/chatdb
 ```
 
-Keep other existing JPA/H2 settings as needed. Do not commit local
-database files.
+Keep other existing JPA/H2 settings as required. Do not commit local database files or uploaded documents.
 
 ## Run ChromaDB
 
-NOVA expects ChromaDB at `http://localhost:8000`.
+NOVA expects ChromaDB to be reachable at `http://localhost:8000`.
 
-If your existing `chroma-docker` container is already running, do not
-create another container on the same port. Check it first:
+If you already have a ChromaDB container, check it before creating another container on the same port:
 
-``` cmd
+```cmd
 docker ps -a
-docker inspect chroma-docker
+docker inspect <container-name>
 curl.exe http://localhost:8000/api/v2/heartbeat
 ```
 
-The development container uses a host bind mount from:
+Run ChromaDB using the official instructions for the image version you choose. For persistent storage, configure a Docker volume or bind mount and ensure the ChromaDB server writes its data to that mounted location. A bind mount alone does not prove the server is using it. Do not use a machine-specific local path in project documentation; describe the mount generically or provide an example that works across environments.
 
-``` text
-C:\Users\Govind Jha\Downloads\chroma-service\chroma-data
-```
-
-to `/data` inside the container. For a new machine, use a persistent
-volume or bind mount and ensure the ChromaDB server configuration
-actually stores its data in that mounted path. A bind mount alone does
-not prove the server writes to it. Consult the official ChromaDB
-instructions for the current image tag and startup command before
-creating a new container.
-
-## Build and run
+## Build and Run
 
 Run commands from the project directory containing `pom.xml`.
 
 Build and test:
 
-``` cmd
+```bash
 mvn clean verify
 ```
 
 Run from source:
 
-``` cmd
+```bash
 mvn spring-boot:run
 ```
 
 Alternatively, package and run the JAR:
 
-``` cmd
+```bash
 mvn clean package
-java -jar target\enterprise-ai-assistant-*.jar
+java -jar target/<generated-jar-name>.jar
 ```
 
-If the wildcard matches multiple JARs, specify the exact generated
-filename.
+Replace `<generated-jar-name>.jar` with the actual filename created in `target`. The application is expected to listen on port `8080`, unless configuration overrides it.
 
-The application is expected to listen on port `8080`, unless
-configuration overrides it.
-
-## API endpoints
+## API Endpoints
 
 The controller base path is `/api/v1`.
 
-  -----------------------------------------------------------------------------------------
-  Method            Endpoint                     Purpose           Request
-  ----------------- ---------------------------- ----------------- ------------------------
-  `POST`            `/api/v1/documents/upload`   Upload and index  `multipart/form-data`;
-                                                 a PDF             field name `file`
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/v1/documents/upload` | Upload and index a PDF. Send `multipart/form-data` with the field name `file`. |
+| `POST` | `/api/v1/chat` | Submit a chat prompt using the JSON request body defined by the controller DTO. |
 
-  `POST`            `/api/v1/chat`               Submit a chat     JSON request body as
-                                                 prompt            defined by the current
-                                                                   controller DTO
-  -----------------------------------------------------------------------------------------
+### Upload a PDF
 
-### Upload a PDF (Windows CMD)
+Replace the example path with a PDF available on your machine:
 
-Replace the path with a PDF available on your machine:
-
-``` cmd
+```cmd
 curl.exe -X POST "http://localhost:8080/api/v1/documents/upload" -F "file=@C:\path\to\document.pdf"
 ```
 
-A successful upload returns a message containing the filename and number
-of chunks indexed.
+A successful upload returns a message containing the filename and number of chunks indexed.
 
-Use Swagger UI to inspect the exact JSON schema for `/api/v1/chat`. The
-request DTO fields are intentionally not guessed in this README.
+Use Swagger UI or inspect the controller DTO to confirm the exact JSON schema for `/api/v1/chat`; do not guess request fields.
 
 ## Swagger / OpenAPI
 
--   Swagger UI: `http://localhost:8080/swagger-ui/index.html`
--   OpenAPI JSON: `http://localhost:8080/v3/api-docs`
+When Springdoc is included and configured:
 
-If Springdoc has not yet been added, include this dependency inside
-`<dependencies>` in `pom.xml`:
+- Swagger UI: `http://localhost:8080/swagger-ui/index.html`
+- OpenAPI JSON: `http://localhost:8080/v3/api-docs`
 
-``` xml
+If Springdoc is not yet included, add the following dependency inside `<dependencies>` in `pom.xml`:
+
+```xml
 <dependency>
     <groupId>org.springdoc</groupId>
     <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
@@ -293,83 +218,69 @@ If Springdoc has not yet been added, include this dependency inside
 </dependency>
 ```
 
-Then rebuild and restart:
+Then rebuild and restart the application:
 
-``` cmd
+```bash
 mvn clean verify
 mvn spring-boot:run
 ```
 
-## Persistence and limitations
+## Persistence and Limitations
 
--   **Chat history:** H2 file database at `./data/chatdb`.
--   **Document vectors:** ChromaDB on port 8000.
--   **Persistence across restarts:** ChromaDB must be configured to
-    write to the persistent mounted path.
--   **Duplicate uploads:** The current ingestion flow can index the same
-    PDF more than once because each upload creates new document records.
-    Duplicate prevention has not yet been implemented, and existing
-    duplicate chunks are not automatically removed.
--   **Embedding compatibility:** Query-time and indexing-time embeddings
-    must use compatible models and preprocessing. Equal vector
-    dimensions alone do not guarantee compatibility.
+- **Chat history:** H2 file database at `./data/chatdb`.
+- **Document vectors:** ChromaDB service on port `8000`.
+- **Persistence across restarts:** ChromaDB must be configured to write data to a persistent volume or mounted path.
+- **Duplicate uploads:** The current ingestion flow may index the same PDF more than once because each upload creates new document records. Duplicate prevention has not yet been implemented, and existing duplicate chunks are not automatically removed.
+- **Embedding compatibility:** Indexing and query-time embeddings must use compatible models and preprocessing. Matching vector dimensions alone does not guarantee compatibility.
 
 ## Troubleshooting
 
 ### Groq requests fail
 
--   Confirm `GROQ_API_KEY` is set in the same CMD session that launches
-    the application.
--   Check that the key is valid and the model is available to your
-    account.
--   Never share API keys in logs, screenshots, or source code.
+- Confirm `GROQ_API_KEY` is set in the same terminal session that launches the application.
+- Check that the key is valid and the configured model is available to your account.
+- Never share API keys in logs, screenshots, or source code.
 
 ### ChromaDB is unavailable
 
-``` cmd
+```cmd
 docker ps
 curl.exe http://localhost:8000/api/v2/heartbeat
 ```
 
-Confirm the container is running and Spring AI is configured for
-`localhost:8000`.
+Confirm that the container is running and Spring AI is configured to connect to `localhost:8000`.
 
 ### Swagger UI returns 404
 
--   Confirm the Springdoc dependency is in `pom.xml`.
--   Run `mvn clean verify`.
--   Restart the application and check `/v3/api-docs`.
+- Confirm the Springdoc dependency is in `pom.xml`.
+- Run `mvn clean verify`.
+- Restart the application and check `/v3/api-docs`.
 
 ### PDF upload works but answers do not use the document
 
--   Confirm upload reports a non-zero chunk count.
--   Check application logs for retrieved chunks.
--   Confirm ingestion and search use the same Chroma collection.
--   Check relevance of the retrieved chunks.
--   Verify embedding model compatibility between indexing and retrieval.
+- Confirm upload reports a non-zero chunk count.
+- Check application logs for retrieved chunks.
+- Confirm ingestion and search use the same ChromaDB collection.
+- Check the relevance of the retrieved chunks.
+- Verify embedding model compatibility between indexing and retrieval.
 
 ### Duplicate results appear
 
-The current ingestion implementation may add the same PDF repeatedly.
-Avoid repeated uploads while investigating. Deduplication and cleanup of
-existing duplicates are separate tasks.
+The current ingestion implementation may add the same PDF repeatedly. Avoid repeated uploads while investigating. Deduplication and cleanup of existing duplicates are separate tasks.
 
-## GitHub security checklist
+## Security Checklist
 
-Before publishing:
+Before publishing the repository:
 
--   [ ] Revoke any API key previously exposed and generate a new one.
--   [ ] Use `${GROQ_API_KEY}` instead of a literal key in YAML.
--   [ ] Add `.gitignore` entries for `target/`, local database files,
-    logs, uploaded PDFs, and local ChromaDB data.
--   [ ] Review `git status` and staged changes before committing.
--   [ ] Do not commit personal or confidential PDFs.
--   [ ] If a secret was committed earlier, revoke it; deleting it from
-    the latest file does not remove it from Git history.
--   [ ] Ensure README setup instructions do not contain secret values.
+- [ ] Revoke any API key that was previously exposed and generate a new one.
+- [ ] Use `${GROQ_API_KEY}` instead of a literal key in YAML.
+- [ ] Add `.gitignore` entries for `target/`, local database files, logs, uploaded PDFs, and local ChromaDB data.
+- [ ] Review `git status` and staged changes before committing.
+- [ ] Do not commit personal or confidential PDFs.
+- [ ] If a secret was committed earlier, revoke it; deleting it from the latest file does not remove it from Git history.
+- [ ] Remove local usernames, absolute machine-specific paths, and other personal environment details from documentation.
+- [ ] Ensure the README contains no secret values.
 
 ## License
 
-Add a `LICENSE` file if you intend to distribute the project as open
-source. Without a license, others are not explicitly granted permission
-to reuse the code.
+Add a `LICENSE` file if you intend to distribute the project as open source. Without a license, others are not explicitly granted permission to reuse the code.

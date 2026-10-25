@@ -18,10 +18,16 @@ import org.springframework.web.multipart.MultipartFile;
 
 import reactor.core.publisher.Flux;
 
+import java.util.Locale;
+import java.util.Set;
+
 @RestController
 @RequestMapping("/api/v1")
 @RequiredArgsConstructor
 public class ChatController {
+
+    private static final Set<String> SUPPORTED_EXTENSIONS =
+            Set.of(".pdf", ".doc", ".docx", ".txt");
 
     private final ChatService chatService;
     private final DocumentIngestionService documentIngestionService;
@@ -75,7 +81,7 @@ public class ChatController {
     }
 
     /**
-     * Upload a PDF and index its text in ChromaDB.
+     * Upload a supported document and index its text in ChromaDB.
      * POST /api/v1/documents/upload
      *
      * Multipart form field: file
@@ -84,27 +90,36 @@ public class ChatController {
             value = "/documents/upload",
             consumes = MediaType.MULTIPART_FORM_DATA_VALUE
     )
-    public ResponseEntity<String> uploadPdf(
+    public ResponseEntity<String> uploadDocument(
             @RequestParam("file") MultipartFile file) {
 
         if (file == null || file.isEmpty()) {
             return ResponseEntity.badRequest()
-                    .body("Please upload a non-empty PDF file.");
+                    .body("Please upload a non-empty document.");
         }
 
         String filename = file.getOriginalFilename();
 
-        if (filename == null
-                || !filename.toLowerCase(
-                        java.util.Locale.ROOT).endsWith(".pdf")) {
+        if (filename == null || filename.isBlank()) {
             return ResponseEntity.badRequest()
-                    .body("Only PDF files are supported.");
+                    .body("The uploaded file must have a filename.");
+        }
+
+        String lowercaseFilename = filename.toLowerCase(Locale.ROOT);
+
+        boolean supported = SUPPORTED_EXTENSIONS.stream()
+                .anyMatch(lowercaseFilename::endsWith);
+
+        if (!supported) {
+            return ResponseEntity.badRequest()
+                    .body("Unsupported file format. "
+                            + "Supported formats: PDF, DOC, DOCX, TXT.");
         }
 
         int chunksIndexed = documentIngestionService.ingestPdf(file);
 
         return ResponseEntity.ok(
-                "PDF indexed successfully. Filename: "
+                "Document indexed successfully. Filename: "
                         + filename
                         + ", chunks indexed: "
                         + chunksIndexed
