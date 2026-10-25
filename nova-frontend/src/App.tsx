@@ -18,8 +18,12 @@ import {
 } from 'lucide-react';
 
 import {
+  clearToken,
   deleteDocument,
   getDocuments,
+  getToken,
+  login,
+  register,
   streamMessage,
   uploadDocument,
   type DocumentUpload,
@@ -34,6 +38,26 @@ type Message = {
 };
 
 type View = 'chat' | 'knowledge';
+type AuthMode = 'login' | 'register';
+type AccountRole = 'USER' | 'ADMIN';
+
+type AuthUser = { email: string; role: string };
+
+function readUserFromToken(token: string | null): AuthUser | null {
+  if (!token) return null;
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const claims = JSON.parse(atob(normalized)) as {
+      sub?: string; email?: string; role?: string; exp?: number;
+    };
+    if (claims.exp && claims.exp * 1000 <= Date.now()) return null;
+    return { email: claims.email ?? claims.sub ?? 'Signed-in user', role: (claims.role ?? 'USER').replace(/^ROLE_/, '').toUpperCase() };
+  } catch {
+    return null;
+  }
+}
 
 function createId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -52,6 +76,15 @@ function getSessionId() {
 }
 
 function App() {
+  const [token, setToken] = useState<string | null>(() => getToken());
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => readUserFromToken(getToken()));
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
+  const [authName, setAuthName] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authRole, setAuthRole] = useState<AccountRole>('USER');
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState('');
   const [view, setView] = useState<View>('chat');
   const [messages, setMessages] = useState<Message[]>([]);
   const [prompt, setPrompt] = useState('');
@@ -71,14 +104,66 @@ function App() {
   const promptRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   useEffect(() => {
-    if (view === 'knowledge') {
+    const currentToken = getToken();
+    const currentUser = readUserFromToken(currentToken);
+    if (!currentToken || !currentUser) {
+      clearToken();
+      setToken(null);
+      setAuthUser(null);
+    } else {
+      setToken(currentToken);
+      setAuthUser(currentUser);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (token && view === 'knowledge') {
       void loadDocuments();
     }
   }, [view]);
+
+  async function handleAuthSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAuthBusy(true);
+    setAuthError('');
+    try {
+      if (authMode === 'register') {
+        await register({ name: authName.trim(), email: authEmail.trim(), password: authPassword, role: authRole });
+      }
+      await login({ email: authEmail.trim(), password: authPassword });
+      const savedToken = getToken();
+      const user = readUserFromToken(savedToken);
+      if (!savedToken || !user) {
+        throw new Error('Login succeeded, but the JWT token or user role could not be read. Check the login response and JWT claims in api.ts/backend.');
+      }
+      setToken(savedToken);
+      setAuthUser(user);
+      setAuthPassword('');
+      setAuthError('');
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Authentication failed. Please try again.');
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  function handleLogout() {
+    clearToken();
+    setToken(null);
+    setAuthUser(null);
+    setAuthPassword('');
+    setMessages([]);
+    setDocuments([]);
+    setSelectedDocument(null);
+    setView('chat');
+    setError('');
+    setUploadMessage('');
+    setAuthMode('login');
+  }
 
   async function loadDocuments() {
     setIsLoadingDocuments(true);
@@ -237,6 +322,57 @@ function App() {
     });
   }
 
+  if (!token || !authUser) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <div className="auth-brand-mark"><Sparkles size={25} /></div>
+          <div className="auth-eyebrow">AI WORKSPACE</div>
+          <h1>NOVA</h1>
+          <p className="auth-subtitle">Your knowledge, amplified.</p>
+          <div className="auth-tabs">
+            <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); setAuthError(''); }}>Sign in</button>
+            <button type="button" className={authMode === 'register' ? 'active' : ''} onClick={() => { setAuthMode('register'); setAuthError(''); }}>Create account</button>
+          </div>
+          <form className="auth-form" onSubmit={(event) => void handleAuthSubmit(event)}>
+            {authMode === 'register' && (
+              <label>
+                Full name
+                <input autoComplete="name" value={authName} onChange={(event) => setAuthName(event.target.value)} required maxLength={100} placeholder="Your name" />
+              </label>
+            )}
+            <label>
+              Email address
+              <input type="email" autoComplete="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} required placeholder="you@example.com" />
+            </label>
+            {authMode === 'register' && (
+              <label>
+                Account role
+                <select
+                  value={authRole}
+                  onChange={(event) => setAuthRole(event.target.value as AccountRole)}
+                  required
+                >
+                  <option value="USER">User</option>
+                  <option value="ADMIN">Admin</option>
+                </select>
+              </label>
+            )}
+            <label>
+              Password
+              <input type="password" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} required minLength={authMode === 'register' ? 8 : undefined} placeholder="Enter your password" />
+            </label>
+            {authError && <div className="auth-error" role="alert">{authError}</div>}
+            <button className="auth-submit" type="submit" disabled={authBusy}>
+              {authBusy ? 'Please wait…' : authMode === 'login' ? 'Sign in to NOVA' : 'Create account'}
+            </button>
+          </form>
+          <p className="auth-footnote">Secure access to your AI workspace.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="nova-app">
       <aside className="sidebar">
@@ -307,8 +443,10 @@ function App() {
               <span className="status-dot" />
               API workspace
             </span>
-            <div className="avatar">
-              <User size={17} />
+            <div className="user-session" title={`${authUser.email} · ${authUser.role}`}>
+              <div className="avatar"><User size={17} /></div>
+              <div className="user-session-copy"><strong>{authUser.email}</strong><span>{authUser.role}</span></div>
+              <button type="button" className="logout-button" onClick={handleLogout}>Log out</button>
             </div>
           </div>
         </header>
@@ -618,15 +756,17 @@ function App() {
                       </span>
                     </button>
 
-                    <button
-                      type="button"
-                      className="icon-button delete-button"
-                      onClick={() => void handleDelete(document)}
-                      title={`Delete ${document.filename}`}
-                      aria-label={`Delete ${document.filename}`}
-                    >
-                      <Trash2 size={17} />
-                    </button>
+                    {authUser.role === 'ADMIN' && (
+                      <button
+                        type="button"
+                        className="icon-button delete-button"
+                        onClick={() => void handleDelete(document)}
+                        title={`Delete ${document.filename}`}
+                        aria-label={`Delete ${document.filename}`}
+                      >
+                        <Trash2 size={17} />
+                      </button>
+                    )}
                   </div>
                 ))
               )}
@@ -694,14 +834,16 @@ function App() {
               </div>
             </div>
 
-            <button
-              type="button"
-              className="primary-button modal-delete"
-              onClick={() => void handleDelete(selectedDocument)}
-            >
-              <Trash2 size={16} />
-              Delete document
-            </button>
+            {authUser.role === 'ADMIN' && (
+              <button
+                type="button"
+                className="primary-button modal-delete"
+                onClick={() => void handleDelete(selectedDocument)}
+              >
+                <Trash2 size={16} />
+                Delete document
+              </button>
+            )}
           </section>
         </div>
       )}

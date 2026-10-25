@@ -1,4 +1,28 @@
+
 const API_BASE_URL = 'http://localhost:8080/api/v1';
+
+const TOKEN_KEY = 'nova-token';
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface RegisterRequest {
+  name: string;
+  email: string;
+  password: string;
+  role: 'USER' | 'ADMIN';
+}
+
+export interface AuthResponse {
+  token: string;
+  tokenType: string;
+  userId: number;
+  name: string;
+  email: string;
+  role: 'USER' | 'ADMIN';
+}
 
 export interface ChatRequest {
   sessionId: string;
@@ -16,16 +40,97 @@ export interface DocumentUpload {
   chunkCount: number;
 }
 
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function saveToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+export function getAuthHeaders(): HeadersInit {
+  const token = getToken();
+
+  return token
+    ? { Authorization: `Bearer ${token}` }
+    : {};
+}
+
 async function getErrorMessage(response: Response): Promise<string> {
   const body = await response.text();
+
+  if (response.status === 401) {
+    return 'Your session has expired or you are not logged in. Please log in again.';
+  }
+
+  if (response.status === 403) {
+    return 'Access denied. You do not have permission to perform this action.';
+  }
+
   return body || `Request failed with status ${response.status}`;
+}
+
+async function authenticatedFetch(
+  url: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const authHeaders = new Headers(getAuthHeaders());
+
+  authHeaders.forEach((value, key) => {
+    headers.set(key, value);
+  });
+
+  return fetch(url, {
+    ...init,
+    headers,
+  });
+}
+
+export async function login(
+  request: LoginRequest
+): Promise<AuthResponse> {
+  const response = await fetch(`${API_BASE_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  const data: AuthResponse = await response.json();
+  saveToken(data.token);
+
+  return data;
+}
+
+export async function register(
+  request: RegisterRequest
+): Promise<string> {
+  const response = await fetch(`${API_BASE_URL}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  return response.text();
 }
 
 export async function sendMessage(
   sessionId: string,
   prompt: string
 ): Promise<string> {
-  const response = await fetch(`${API_BASE_URL}/chat`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sessionId, prompt } satisfies ChatRequest),
@@ -44,7 +149,7 @@ export async function streamMessage(
   prompt: string,
   onToken: (token: string) => void
 ): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/chat/stream`, {
+  const response = await authenticatedFetch(`${API_BASE_URL}/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -111,7 +216,6 @@ export async function streamMessage(
       }
     }
 
-    // Process any final event that was not followed by a blank line.
     if (buffer.trim()) {
       processEvent(buffer);
     }
@@ -124,10 +228,13 @@ export async function uploadDocument(file: File): Promise<string> {
   const formData = new FormData();
   formData.append('file', file);
 
-  const response = await fetch(`${API_BASE_URL}/documents/upload`, {
-    method: 'POST',
-    body: formData,
-  });
+  const response = await authenticatedFetch(
+    `${API_BASE_URL}/documents/upload`,
+    {
+      method: 'POST',
+      body: formData,
+    }
+  );
 
   if (!response.ok) {
     throw new Error(await getErrorMessage(response));
@@ -137,7 +244,7 @@ export async function uploadDocument(file: File): Promise<string> {
 }
 
 export async function getDocuments(): Promise<DocumentUpload[]> {
-  const response = await fetch(`${API_BASE_URL}/documents`);
+  const response = await authenticatedFetch(`${API_BASE_URL}/documents`);
 
   if (!response.ok) {
     throw new Error(await getErrorMessage(response));
@@ -149,7 +256,7 @@ export async function getDocuments(): Promise<DocumentUpload[]> {
 export async function getDocument(
   documentId: string
 ): Promise<DocumentUpload> {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `${API_BASE_URL}/documents/${encodeURIComponent(documentId)}`
   );
 
@@ -161,7 +268,7 @@ export async function getDocument(
 }
 
 export async function deleteDocument(documentId: string): Promise<string> {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `${API_BASE_URL}/documents/${encodeURIComponent(documentId)}`,
     { method: 'DELETE' }
   );
