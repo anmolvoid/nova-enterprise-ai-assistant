@@ -1,2 +1,402 @@
-/mvnw text eol=lf
-*.cmd text eol=crlf
+# NOVA — Enterprise AI Knowledge Assistant
+
+NOVA is an enterprise-style AI knowledge assistant built with **Spring Boot, Spring AI, React, and TypeScript**. It uses Retrieval-Augmented Generation (RAG) to answer questions using uploaded PDF documents. PDF text is extracted and split into chunks, stored in ChromaDB, and retrieved as context for responses generated through Groq's OpenAI-compatible API.
+
+The application also includes JWT-based authentication, role-based access control (RBAC), document management, and chat history persistence.
+
+## Contents
+
+- [Features](#features)
+- [Technology Stack](#technology-stack)
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Configuration](#configuration)
+- [Run ChromaDB](#run-chromadb)
+- [Run the Backend](#run-the-backend)
+- [Run the Frontend](#run-the-frontend)
+- [Authentication and Authorization](#authentication-and-authorization)
+- [API Endpoints](#api-endpoints)
+- [Swagger / OpenAPI](#swagger--openapi)
+- [Persistence and Limitations](#persistence-and-limitations)
+- [Troubleshooting](#troubleshooting)
+- [Security Checklist](#security-checklist)
+
+## Features
+
+- Register and sign in with email/password.
+- Authenticate API requests with JWT bearer tokens.
+- Role-based authorization for protected operations.
+- Upload PDF documents and extract their text.
+- Split extracted text into overlapping chunks.
+- Store and retrieve document chunks using ChromaDB similarity search.
+- Answer questions using a RAG workflow with Spring AI and Groq.
+- Support regular and streaming chat flows.
+- View uploaded documents and inspect document details.
+- Restrict document deletion to users with the `ADMIN` role.
+- Persist chat history using Spring Data JPA and H2.
+- Provide a React + TypeScript web interface for chat and document management.
+
+## Technology Stack
+
+| Technology | Purpose |
+|---|---|
+| Java 17 | Backend runtime |
+| Spring Boot 3.5.x | Backend application framework |
+| Spring AI 1.1.x | Chat model and vector-store integrations |
+| Spring Security | Request security and authorization |
+| JWT | Stateless authentication |
+| Maven | Backend build and dependency management |
+| React + TypeScript | Frontend application |
+| Vite | Frontend development server and build tool |
+| Groq API | Hosted language-model inference |
+| ChromaDB | Vector storage and similarity search |
+| Docker | Run ChromaDB as a separate service |
+| Spring Data JPA / Hibernate | Relational persistence |
+| H2 | Local relational database for chat history |
+| Apache PDFBox | PDF text extraction |
+| Spring Web MVC / WebFlux | REST and streaming support, where configured |
+| Springdoc OpenAPI UI | API documentation, if configured |
+
+Check `pom.xml`, `package.json`, and the application configuration files for the exact versions used by your checkout.
+
+## Architecture
+
+### PDF ingestion
+
+1. The frontend uploads a PDF to `POST /api/v1/documents/upload`.
+2. `DocumentIngestionService` validates the uploaded file.
+3. `PdfService` extracts text from the PDF.
+4. `ChunkingService` splits the extracted text into chunks (currently 1,000 characters with 150 characters of overlap, according to the current implementation).
+5. Each Spring AI `Document` stores chunk text and metadata such as `source` and `chunk_index`.
+6. The vector store adds the chunks to ChromaDB.
+
+### Chat / RAG
+
+1. The frontend sends a question to `POST /api/v1/chat` or uses `POST /api/v1/chat/stream` for streaming.
+2. The backend loads the relevant chat/session history.
+3. ChromaDB similarity search retrieves up to four relevant chunks.
+4. Retrieved text and source metadata are assembled into context.
+5. Spring AI sends the context and question to the configured Groq model.
+6. User and assistant messages are saved in chat history.
+
+Source labels in generated answers are prompt-driven unless the application validates citations programmatically.
+
+### Authentication flow
+
+1. A user registers through `POST /api/v1/auth/register`.
+2. The user signs in through `POST /api/v1/auth/login`.
+3. The backend validates the credentials and returns a JWT.
+4. The frontend stores the token in browser local storage under the key `nova-token` (as configured in the frontend API service).
+5. Protected frontend API requests send the token in the header `Authorization: Bearer <token>`.
+6. Spring Security validates the token and checks the user's authorities for protected operations.
+
+The JWT expiration is configured in the backend. In the current configuration discussed for this project, tokens expire after **one hour**. The user must sign in again after the token expires unless token refresh is implemented.
+
+## Prerequisites
+
+- JDK 17
+- Apache Maven 3.9.x or a compatible version
+- Node.js and npm
+- Docker Desktop or another Docker-compatible runtime
+- A valid Groq API key
+- Git
+
+Verify the tools in Windows Command Prompt:
+
+```cmd
+java -version
+javac -version
+mvn -version
+node --version
+npm --version
+docker --version
+docker info
+```
+
+Ensure `JAVA_HOME` points to a JDK 17 installation.
+
+## Configuration
+
+### Groq API key
+
+Set the API key in the same terminal session used to start the backend.
+
+**Windows Command Prompt:**
+
+```cmd
+set GROQ_API_KEY=replace_with_your_groq_api_key
+```
+
+**PowerShell:**
+
+```powershell
+$env:GROQ_API_KEY = "replace_with_your_groq_api_key"
+```
+
+Do not commit the real key. If a key was exposed or committed, revoke it and create a replacement.
+
+The relevant `application.yml` settings should use an environment variable, merged with your existing configuration rather than replacing unrelated settings. Example:
+
+```yaml
+spring:
+  ai:
+    openai:
+      api-key: ${GROQ_API_KEY}
+      base-url: https://api.groq.com/openai
+      chat:
+        options:
+          model: openai/gpt-oss-120b
+
+    vectorstore:
+      chroma:
+        client:
+          host: http://localhost
+          port: 8000
+        tenant-name: default_tenant
+        database-name: default_database
+        initialize-schema: true
+        collection-name: nova-documents-cosine
+```
+
+**Important:** The ChromaDB collection name in the running service must match the collection configured in Spring AI. If your local configuration uses a different collection name, update the YAML or create/use the matching collection.
+
+The configured H2 JDBC URL is:
+
+```text
+jdbc:h2:file:./data/chatdb
+```
+
+Keep other existing JPA/H2 settings as required. Do not commit local database files or uploaded documents.
+
+### Frontend API base URL
+
+The frontend should call the backend at `http://localhost:8080` during local development. Check `src/services/api.ts` for the API base URL and keep it aligned with the backend port and context path. If you change the backend URL, update the frontend configuration accordingly.
+
+## Run ChromaDB
+
+NOVA expects ChromaDB to be reachable at `http://localhost:8000`.
+
+If you already have a ChromaDB container, check it before creating another container on the same port:
+
+```cmd
+docker ps -a
+docker inspect <container-name>
+curl.exe http://localhost:8000/api/v2/heartbeat
+```
+
+Run ChromaDB using the official instructions for the image version you choose. For persistent storage, configure a Docker volume or bind mount and ensure the ChromaDB server writes its data to that mounted location.
+
+## Run the Backend
+
+Run commands from the backend project directory containing `pom.xml`.
+
+Build and test:
+
+```bash
+mvn clean verify
+```
+
+Start the application:
+
+```bash
+mvn spring-boot:run
+```
+
+Alternatively, package and run the JAR:
+
+```bash
+mvn clean package
+java -jar target/<generated-jar-name>.jar
+```
+
+Replace `<generated-jar-name>.jar` with the actual filename created in `target`. The backend is expected to listen on port `8080`, unless configuration overrides it.
+
+## Run the Frontend
+
+Open a **separate terminal** and navigate to the frontend directory containing `package.json`.
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Start the Vite development server:
+
+```bash
+npm run dev
+```
+
+Open the local URL printed by Vite, usually `http://localhost:5173`.
+
+Create a production build to check TypeScript and bundling:
+
+```bash
+npm run build
+```
+
+Keep the backend, frontend, and ChromaDB service running while testing the full application.
+
+## Authentication and Authorization
+
+### JWT storage and requests
+
+- The frontend stores the signed-in JWT in browser local storage under `nova-token`.
+- The frontend API service reads the token and attaches it to protected requests using `Authorization: Bearer <token>`.
+- Signing out should clear the stored token.
+- Do not paste a real JWT into issues, screenshots, public repositories, or messages. Treat it as a credential.
+
+To check whether a token exists in Chrome:
+
+1. Open the application.
+2. Press `F12` to open Developer Tools.
+3. Select **Application** → **Local Storage** → `http://localhost:5173`.
+4. Look for the `nova-token` key.
+
+Avoid sharing the token value itself.
+
+### Roles
+
+| Role | Access |
+|---|---|
+| `USER` | Can use authenticated features such as chat and document listing/details, subject to the backend security configuration. |
+| `ADMIN` | Has the permissions granted to `USER` plus permission to delete documents, according to the current backend security rules. |
+
+A `403 Forbidden` response when a `USER` attempts to delete a document is expected if the endpoint is restricted to `ADMIN`.
+
+**Production security note:** A public registration form must not allow users to grant themselves the `ADMIN` role. The backend should assign `USER` by default for public registration and allow administrator privileges only through a trusted, controlled process. Hiding the role option in the frontend alone is not sufficient authorization.
+
+## API Endpoints
+
+The API base path is `/api/v1`. Protected endpoints require a valid JWT unless your backend security configuration explicitly permits anonymous access.
+
+| Method | Endpoint | Purpose | Access |
+|---|---|---|---|
+| `POST` | `/api/v1/auth/register` | Register an account | Public |
+| `POST` | `/api/v1/auth/login` | Authenticate and receive a JWT | Public |
+| `POST` | `/api/v1/documents/upload` | Upload and index a PDF | Authenticated |
+| `GET` | `/api/v1/documents` | List documents | Authenticated |
+| `GET` | `/api/v1/documents/{documentId}` | Retrieve document details | Authenticated |
+| `DELETE` | `/api/v1/documents/{documentId}` | Delete a document | `ADMIN` |
+| `POST` | `/api/v1/chat` | Submit a chat prompt | Authenticated |
+| `POST` | `/api/v1/chat/stream` | Submit a chat prompt with streaming response | Authenticated |
+
+Confirm request and response DTOs in the controller classes or Swagger UI. Do not assume request field names beyond those defined by the actual DTOs.
+
+### Upload a PDF with curl
+
+Replace the example path with a PDF available on your machine and replace `<JWT>` with a token obtained from the login endpoint:
+
+```cmd
+curl.exe -X POST "http://localhost:8080/api/v1/documents/upload" -H "Authorization: Bearer <JWT>" -F "file=@C:\path\to\document.pdf"
+```
+
+### Call an authenticated endpoint
+
+```cmd
+curl.exe "http://localhost:8080/api/v1/documents" -H "Authorization: Bearer <JWT>"
+```
+
+Do not commit real JWTs or use them in shared examples.
+
+## Swagger / OpenAPI
+
+If Springdoc is included and configured:
+
+- Swagger UI: `http://localhost:8080/swagger-ui/index.html`
+- OpenAPI JSON: `http://localhost:8080/v3/api-docs`
+
+If Swagger UI returns `404`, confirm that the Springdoc dependency is present in `pom.xml`, rebuild the backend, and check `/v3/api-docs`.
+
+## Persistence and Limitations
+
+- **Chat history:** H2 file database at `./data/chatdb`.
+- **Document vectors:** ChromaDB service on port `8000`.
+- **Vector persistence:** ChromaDB must be configured to write data to a persistent volume or mounted path if data must survive container recreation.
+- **Duplicate uploads:** The ingestion flow may index the same PDF more than once if duplicate prevention is not implemented.
+- **Embedding compatibility:** Indexing and query-time embeddings must use compatible models and preprocessing. Matching vector dimensions alone does not guarantee compatibility.
+- **JWT lifetime:** Tokens expire according to backend configuration; the current configured lifetime is one hour. Token refresh is not assumed to be implemented.
+- **Local storage:** Browser local storage is accessible to JavaScript running on the origin. Protect the application against cross-site scripting (XSS); consider an appropriate HttpOnly-cookie strategy for production after reviewing the application's architecture.
+
+## Troubleshooting
+
+### Login or registration fails
+
+- Confirm the backend is running and reachable at `http://localhost:8080`.
+- Check the browser Network tab and backend logs for the response status and message.
+- Confirm the frontend API base URL matches the backend URL.
+- Confirm the submitted fields match the backend request DTO.
+
+### A protected request returns `401 Unauthorized`
+
+- Sign in again to obtain a fresh token.
+- Check that the frontend sends `Authorization: Bearer <JWT>`.
+- Confirm the token has not expired and that the backend JWT signing/validation settings match.
+
+### A request returns `403 Forbidden`
+
+- Confirm the signed-in user has the required role.
+- A `USER` attempting an `ADMIN`-only delete should receive `403 Forbidden`.
+- Do not fix authorization problems by removing backend security rules.
+
+### Groq requests fail
+
+- Confirm `GROQ_API_KEY` is set in the same terminal session that launches the application.
+- Check that the key is valid and the configured model is available to your account.
+- Never share API keys in logs, screenshots, or source code.
+
+### ChromaDB is unavailable
+
+```cmd
+docker ps
+curl.exe http://localhost:8000/api/v2/heartbeat
+```
+
+Confirm the container is running and Spring AI is configured to connect to `localhost:8000`.
+
+### Error: collection does not exist
+
+- Confirm the configured collection name in `application.yml`.
+- Confirm that the collection exists in the same ChromaDB tenant and database used by Spring AI.
+- Ensure the backend and your ChromaDB inspection commands are connecting to the same ChromaDB instance.
+
+### PDF upload works but answers do not use the document
+
+- Confirm upload reports a non-zero chunk count.
+- Check application logs for retrieved chunks.
+- Confirm ingestion and search use the same ChromaDB collection.
+- Verify embedding model compatibility between indexing and retrieval.
+
+### Frontend styles are missing
+
+- Confirm `src/main.tsx` imports `./App.css`.
+- Make sure the complete workspace stylesheet is still present; do not replace it with only the authentication styles.
+- Restart the Vite development server after correcting imports or CSS.
+
+### Frontend build fails
+
+```bash
+npm run build
+```
+
+Read the first TypeScript/compiler error and check that imports, API function names, and request types match the current code in `src/services/api.ts`.
+
+## Security Checklist
+
+Before publishing the repository:
+
+- [ ] Revoke any API key that was previously exposed and generate a replacement.
+- [ ] Use `${GROQ_API_KEY}` instead of a literal key in YAML.
+- [ ] Ensure public registration cannot grant `ADMIN` privileges.
+- [ ] Keep authorization checks on the backend; frontend role-based UI is only a presentation choice.
+- [ ] Add `.gitignore` entries for `target/`, `node_modules/`, local database files, logs, uploaded PDFs, and local ChromaDB data.
+- [ ] Review `git status` and staged changes before committing.
+- [ ] Do not commit personal or confidential PDFs.
+- [ ] If a secret was committed earlier, revoke it; removing it from the latest file does not remove it from Git history.
+- [ ] Remove local usernames, absolute machine-specific paths, and other personal environment details from documentation.
+- [ ] Do not commit real JWTs, passwords, or API keys.
+- [ ] Review the use of browser local storage and apply appropriate XSS protections.
+
+## License
+
+Add a `LICENSE` file if you intend to distribute the project as open source. Without a license, others are not explicitly granted permission to reuse the code.
